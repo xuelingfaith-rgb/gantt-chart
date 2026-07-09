@@ -284,7 +284,7 @@ body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color
       <div class="sub-row">
         <input type="date" id="sfStart" />
         <input type="date" id="sfEnd" />
-        <button class="btn btn-primary btn-sm" onclick="addSubtaskInModal()">Add</button>
+        <button class="btn btn-primary btn-sm" id="subSubmitBtn" onclick="addSubtaskInModal()">Add</button>
         <button class="btn btn-ghost btn-sm" onclick="toggleAddSubtaskForm()">✕</button>
       </div>
     </div>
@@ -330,6 +330,7 @@ let expanded = {};       // taskId -> bool
 let selectedId = null;
 let editingId = null;    // task being edited in modal
 let pendingSubtasks = []; // subtasks buffer while modal is open
+let editingSubIndex = -1; // index in pendingSubtasks currently being edited, -1 = adding new
 let readonly = false;
 let zoom = 'week';
 let viewStart = null;
@@ -469,6 +470,40 @@ function scrollToToday() {
 }
 
 function goToToday() { computeViewStart(); render(); scrollToToday(); }
+
+// Keep whatever's currently on screen visually anchored when viewStart shifts
+// (e.g. after editing/dragging a task to an earlier date), instead of letting
+// every bar jump relative to a scroll position that never moved.
+function keepScrollStable(oldViewStart) {
+  const delta = dayDiff(viewStart, oldViewStart); // days oldViewStart is ahead of the new viewStart
+  if (delta !== 0) {
+    document.getElementById('ganttArea').scrollLeft += delta * colWidth();
+  }
+}
+
+// Guarantee the task/subtask just edited or dragged is actually visible,
+// even if the edit moved it far outside whatever was previously on screen.
+function scrollTaskIntoView(id, isSub, parentId) {
+  let start;
+  if (isSub) {
+    const p = tasks.find(t=>t.id===parentId);
+    const s = p && p.subtasks.find(s=>s.id===id);
+    if (!s) return;
+    start = s.start;
+  } else {
+    const t = tasks.find(t=>t.id===id);
+    if (!t) return;
+    start = t.start;
+  }
+  const gantt = document.getElementById('ganttArea');
+  const cw = colWidth();
+  const left = dayDiff(viewStart, parseDate(start)) * cw;
+  const viewportLeft = gantt.scrollLeft;
+  const viewportRight = viewportLeft + gantt.clientWidth;
+  if (left < viewportLeft || left > viewportRight - cw) {
+    gantt.scrollLeft = Math.max(0, left - gantt.clientWidth / 3);
+  }
+}
 
 // ─── FLAT ROWS (tasks + visible subtasks) ─────────────────────────────────────
 function flatRows() {
@@ -667,15 +702,25 @@ function onDrag(e) {
     const ns=new Date(s); ns.setDate(ns.getDate()+dx);
     if (ns<en) task.start=fmt(ns);
   }
+  // Recompute the view window live so dragging a bar earlier than the
+  // current viewStart extends the timeline instead of going off-screen.
+  const oldViewStart = viewStart;
+  computeViewStart();
+  renderTimeline();
   renderGanttRows();
+  keepScrollStable(oldViewStart);
 }
 
 function endDrag() {
   if (!dragState) return;
+  const { id, type, parentId } = dragState;
   dragState = null;
   document.removeEventListener('mousemove', onDrag);
   document.removeEventListener('mouseup', endDrag);
+  const oldViewStart = viewStart;
   computeViewStart(); save(); render();
+  keepScrollStable(oldViewStart);
+  scrollTaskIntoView(id, type==='sub', parentId);
 }
 
 // ─── TASK MODAL ───────────────────────────────────────────────────────────────
@@ -691,6 +736,7 @@ function openAddTask() {
   if (readonly) return;
   editingId = null;
   pendingSubtasks = [];
+  editingSubIndex = -1;
   document.getElementById('modalTitle').textContent = 'Add Task';
   document.getElementById('deleteBtn').style.display = 'none';
   document.getElementById('fName').value = '';
@@ -714,6 +760,7 @@ function openEditTask(id) {
   if (!t) return;
   editingId = id;
   pendingSubtasks = JSON.parse(JSON.stringify(t.subtasks||[]));
+  editingSubIndex = -1;
   document.getElementById('modalTitle').textContent = 'Edit Task';
   document.getElementById('deleteBtn').style.display = 'inline-flex';
   document.getElementById('fName').value = t.name;
@@ -731,7 +778,7 @@ function openEditTask(id) {
 
 function closeTaskModal() {
   document.getElementById('taskModal').style.display='none';
-  editingId = null; pendingSubtasks = [];
+  editingId = null; pendingSubtasks = []; editingSubIndex = -1;
 }
 
 function saveTask() {
@@ -754,8 +801,14 @@ function saveTask() {
   } else {
     tasks.push(task);
   }
-  closeTaskModal(); computeViewStart(); save(); render();
-  showToast(editingId?'Task updated':'Task added');
+  const wasEditing = editingId;
+  const savedId = task.id;
+  closeTaskModal();
+  const oldViewStart = viewStart;
+  computeViewStart(); save(); render();
+  keepScrollStable(oldViewStart);
+  scrollTaskIntoView(savedId, false, null);
+  showToast(wasEditing?'Task updated':'Task added');
 }
 
 function deleteCurrentTask() {
@@ -785,6 +838,8 @@ function toggleAddSubtaskForm() {
   const f = document.getElementById('addSubtaskForm');
   const show = f.style.display==='none';
   f.style.display = show?'flex':'none';
+  editingSubIndex = -1;
+  document.getElementById('subSubmitBtn').textContent = 'Add';
   if (show) {
     // Default dates: use task dates
     const ts = document.getElementById('fStart').value || fmt(new Date());
@@ -803,7 +858,14 @@ function addSubtaskInModal() {
   const start = document.getElementById('sfStart').value;
   const end = document.getElementById('sfEnd').value;
   if (!start||!end||end<start) { showToast('End date must be after start date'); return; }
-  pendingSubtasks.push({ id:uid(), name, assignee:document.getElementById('sfAssignee').value.trim(), start, end, progress:0 });
+  const assignee = document.getElementById('sfAssignee').value.trim();
+  if (editingSubIndex > -1) {
+    pendingSubtasks[editingSubIndex] = { ...pendingSubtasks[editingSubIndex], name, assignee, start, end };
+    editingSubIndex = -1;
+    document.getElementById('subSubmitBtn').textContent = 'Add';
+  } else {
+    pendingSubtasks.push({ id:uid(), name, assignee, start, end, progress:0 });
+  }
   renderSubtaskListModal();
   document.getElementById('sfName').value='';
   document.getElementById('sfAssignee').value='';
@@ -812,18 +874,25 @@ function addSubtaskInModal() {
 
 function deleteSubInModal(i) {
   pendingSubtasks.splice(i,1);
+  if (editingSubIndex === i) {
+    editingSubIndex = -1;
+    document.getElementById('addSubtaskForm').style.display='none';
+    document.getElementById('subSubmitBtn').textContent = 'Add';
+  } else if (editingSubIndex > i) {
+    editingSubIndex--;
+  }
   renderSubtaskListModal();
 }
 
 function editSubInModal(i) {
   const s = pendingSubtasks[i];
+  editingSubIndex = i;
   document.getElementById('sfName').value = s.name;
   document.getElementById('sfAssignee').value = s.assignee||'';
   document.getElementById('sfStart').value = s.start;
   document.getElementById('sfEnd').value = s.end;
   document.getElementById('addSubtaskForm').style.display='flex';
-  pendingSubtasks.splice(i,1);
-  renderSubtaskListModal();
+  document.getElementById('subSubmitBtn').textContent = 'Update';
   document.getElementById('sfName').focus();
 }
 
