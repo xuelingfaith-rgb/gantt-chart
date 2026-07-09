@@ -238,7 +238,7 @@ body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color
 <div class="toast" id="toast"></div>
 
 <!-- TASK MODAL -->
-<div class="modal-overlay" id="taskModal" style="display:none" onclick="if(event.target===this)closeTaskModal()">
+<div class="modal-overlay" id="taskModal" style="display:none">
   <div class="modal">
     <h2 id="modalTitle">Add Task</h2>
     <div class="form-grid">
@@ -943,7 +943,6 @@ function forkChart() {
 // ─── KEYBOARD ─────────────────────────────────────────────────────────────────
 document.addEventListener('keydown', e => {
   if (document.getElementById('taskModal').style.display!=='none') {
-    if (e.key==='Escape') closeTaskModal();
     if (e.key==='Enter' && (e.ctrlKey||e.metaKey)) saveTask();
     return;
   }
