@@ -139,6 +139,10 @@ body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color
 .subtask-item-modal .sub-del:hover { color: var(--danger); background: rgba(239,68,68,.1); }
 .subtask-item-modal .sub-edit { background: none; border: none; color: var(--text2); cursor: pointer; padding: 2px 4px; border-radius: 3px; font-size: 12px; }
 .subtask-item-modal .sub-edit:hover { color: var(--accent); background: rgba(108,99,255,.1); }
+.subtask-item-modal .sub-move { background: none; border: none; color: var(--text2); cursor: pointer; padding: 2px 4px; border-radius: 3px; font-size: 11px; line-height: 1; }
+.subtask-item-modal .sub-move:hover:not(:disabled) { color: var(--accent); background: rgba(108,99,255,.1); }
+.subtask-item-modal .sub-move:disabled { opacity: .25; cursor: default; }
+.subtask-item-modal .sub-move-group { display: flex; flex-direction: column; gap: 1px; }
 .add-subtask-inline { display: flex; flex-direction: column; gap: 8px; background: var(--bg); border: 1px dashed var(--border); border-radius: 6px; padding: 10px; margin-top: 6px; }
 .add-subtask-inline .sub-row { display: flex; gap: 8px; }
 .add-subtask-inline input { background: var(--surface); border: 1px solid var(--border); border-radius: 5px; padding: 6px 8px; color: var(--text); font-size: 12px; flex: 1; }
@@ -825,6 +829,10 @@ function renderSubtaskListModal() {
   if (!pendingSubtasks.length) { el.innerHTML=''; return; }
   el.innerHTML = pendingSubtasks.map((s,i) => `
     <div class="subtask-item-modal">
+      <div class="sub-move-group">
+        <button class="sub-move" onclick="moveSubtask(${i},-1)" title="Move up" ${i===0?'disabled':''}>▲</button>
+        <button class="sub-move" onclick="moveSubtask(${i},1)" title="Move down" ${i===pendingSubtasks.length-1?'disabled':''}>▼</button>
+      </div>
       <span class="sub-name">${esc(s.name)}</span>
       <span class="sub-dates">${s.start} → ${s.end}</span>
       ${s.assignee?`<span style="font-size:11px;color:var(--text2)">${esc(s.assignee)}</span>`:''}
@@ -832,6 +840,15 @@ function renderSubtaskListModal() {
       <button class="sub-del" onclick="deleteSubInModal(${i})" title="Delete">✕</button>
     </div>
   `).join('');
+}
+
+function moveSubtask(i, dir) {
+  const j = i + dir;
+  if (j < 0 || j >= pendingSubtasks.length) return;
+  [pendingSubtasks[i], pendingSubtasks[j]] = [pendingSubtasks[j], pendingSubtasks[i]];
+  if (editingSubIndex === i) editingSubIndex = j;
+  else if (editingSubIndex === j) editingSubIndex = i;
+  renderSubtaskListModal();
 }
 
 function toggleAddSubtaskForm() {
