@@ -1008,6 +1008,10 @@ function addSubtaskDirect(taskId) {
 function openEditSubtask(parentId, subId) {
   if (readonly) return;
   openEditTask(parentId);
+  setTimeout(() => {
+    const idx = pendingSubtasks.findIndex(s => s.id === subId);
+    if (idx > -1) editSubInModal(idx);
+  }, 80);
 }
 
 // ─── SHARE ────────────────────────────────────────────────────────────────────
