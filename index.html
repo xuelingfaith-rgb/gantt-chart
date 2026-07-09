@@ -565,7 +565,7 @@ function renderTaskList() {
       const expBtn = hasSubs
         ? `<button class="expand-btn${isOpen?' open':''}" onclick="event.stopPropagation();toggleExpand('${t.id}')">▶</button>`
         : `<span style="width:16px;flex-shrink:0"></span>`;
-      return `<div class="task-row${selectedId===t.id?' selected':''}" onclick="select('${t.id}')" ondblclick="${readonly?'':'openEditTask(\''+t.id+'\')'}">
+      return `<div class="task-row${selectedId===t.id?' selected':''}" data-row-id="${t.id}" onclick="select('${t.id}')" ondblclick="${readonly?'':'openEditTask(\''+t.id+'\')'}">
         ${moveBtns}
         ${expBtn}
         <div class="task-color-dot" style="background:${t.color}"></div>
@@ -577,7 +577,7 @@ function renderTaskList() {
       </div>`;
     } else {
       const s = r.sub; const t = r.task;
-      return `<div class="task-row subtask-row${selectedId===s.id?' selected':''}" onclick="select('${s.id}')" ondblclick="${readonly?'':'openEditSubtask(\''+t.id+'\',\''+s.id+'\')'}">
+      return `<div class="task-row subtask-row${selectedId===s.id?' selected':''}" data-row-id="${s.id}" onclick="select('${s.id}')" ondblclick="${readonly?'':'openEditSubtask(\''+t.id+'\',\''+s.id+'\')'}">
         <span style="width:16px;flex-shrink:0"></span>
         <div class="task-color-dot sub" style="background:${t.color}"></div>
         <span class="task-name" title="${esc(s.name)}">${esc(s.name)}</span>
@@ -606,7 +606,13 @@ function moveTaskUpDown(id, dir) {
 
 function select(id) {
   selectedId = selectedId === id ? null : id;
-  renderTaskList(); renderGanttRows();
+  // Toggle the 'selected' class in place rather than a full re-render -
+  // rebuilding the bar's DOM node on every click breaks the browser's
+  // double-click detection on it.
+  document.querySelectorAll('[data-row-id].selected').forEach(el => el.classList.remove('selected'));
+  if (selectedId) {
+    document.querySelectorAll(`[data-row-id="${selectedId}"]`).forEach(el => el.classList.add('selected'));
+  }
 }
 
 function renderTimeline() {
@@ -690,7 +696,7 @@ function ganttRowHtml(start, end, color, progress, label, id, type, cw, total, p
   const resizeR = readonly ? '' : `<div class="task-bar-resize" onmousedown="startDrag(event,'${id}','${type}','${parentId}','right');event.stopPropagation()"></div>`;
   const resizeL = readonly ? '' : `<div class="task-bar-resize-left" onmousedown="startDrag(event,'${id}','${type}','${parentId}','left');event.stopPropagation()"></div>`;
   const dblEdit = readonly ? '' : `ondblclick="${isMain?`openEditTask('${id}')`:`openEditSubtask('${parentId}','${id}')`};event.stopPropagation()"`;
-  return `<div class="${rowClass}" onclick="select('${id}')">
+  return `<div class="${rowClass}" data-row-id="${id}" onclick="select('${id}')">
     <div class="${barClass}" style="left:${left}px;width:${width}px;background:${color}" ${resizeAttrs} ${dblEdit}
       data-tip-name="${esc(label)}" data-tip-start="${start}" data-tip-end="${end}"
       onmouseenter="showBarTooltip(this)" onmouseleave="hideBarTooltip()">
@@ -776,10 +782,17 @@ function onDrag(e) {
 
 function endDrag() {
   if (!dragState) return;
-  const { id, type, parentId } = dragState;
+  const { id, type, parentId, origStart, origEnd } = dragState;
   dragState = null;
   document.removeEventListener('mousemove', onDrag);
   document.removeEventListener('mouseup', endDrag);
+  let task;
+  if (type==='task') task = tasks.find(t=>t.id===id);
+  else { const p = tasks.find(t=>t.id===parentId); task = p && p.subtasks.find(s=>s.id===id); }
+  // Nothing actually moved (just a click, not a drag) - skip the re-render
+  // entirely, otherwise rebuilding the bar's DOM mid-click breaks the
+  // browser's double-click detection for it.
+  if (!task || (task.start === origStart && task.end === origEnd)) return;
   const oldViewStart = viewStart;
   computeViewStart(); save(); render();
   keepScrollStable(oldViewStart);
