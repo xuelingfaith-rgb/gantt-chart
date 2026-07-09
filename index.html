@@ -160,6 +160,11 @@ body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color
 .toast { position: fixed; bottom: 24px; left: 50%; transform: translateX(-50%); background: var(--surface2); border: 1px solid var(--border); border-radius: var(--radius); padding: 10px 20px; font-size: 13px; z-index: 300; opacity: 0; transition: opacity .3s; pointer-events: none; box-shadow: var(--shadow); }
 .toast.show { opacity: 1; }
 
+/* GANTT BAR TOOLTIP */
+.gantt-tooltip { position: fixed; z-index: 400; background: var(--surface2); border: 1px solid var(--border); border-radius: 6px; padding: 8px 11px; box-shadow: var(--shadow); pointer-events: none; display: none; max-width: 280px; }
+.gantt-tooltip-name { font-size: 12px; font-weight: 700; color: var(--text); margin-bottom: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.gantt-tooltip-meta { font-size: 11px; color: var(--text2); white-space: nowrap; }
+
 ::-webkit-scrollbar { width: 5px; height: 5px; }
 ::-webkit-scrollbar-track { background: transparent; }
 ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
@@ -240,6 +245,7 @@ body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color
 </div>
 
 <div class="toast" id="toast"></div>
+<div class="gantt-tooltip" id="ganttTooltip"></div>
 
 <!-- TASK MODAL -->
 <div class="modal-overlay" id="taskModal" style="display:none">
@@ -661,7 +667,9 @@ function ganttRowHtml(start, end, color, progress, label, id, type, cw, total, p
   const resizeL = readonly ? '' : `<div class="task-bar-resize-left" onmousedown="startDrag(event,'${id}','${type}','${parentId}','left');event.stopPropagation()"></div>`;
   const dblEdit = readonly ? '' : `ondblclick="${isMain?`openEditTask('${id}')`:`openEditSubtask('${parentId}','${id}')`};event.stopPropagation()"`;
   return `<div class="${rowClass}" onclick="select('${id}')">
-    <div class="${barClass}" style="left:${left}px;width:${width}px;background:${color}" ${resizeAttrs} ${dblEdit}>
+    <div class="${barClass}" style="left:${left}px;width:${width}px;background:${color}" ${resizeAttrs} ${dblEdit}
+      data-tip-name="${esc(label)}" data-tip-start="${start}" data-tip-end="${end}"
+      onmouseenter="showBarTooltip(this)" onmouseleave="hideBarTooltip()">
       <div class="task-bar-fill" style="width:${progress}%"></div>
       ${resizeL}
       <span class="task-bar-label${isMain?'':' sub-label'}">${esc(label)}</span>
@@ -670,10 +678,37 @@ function ganttRowHtml(start, end, color, progress, label, id, type, cw, total, p
   </div>`;
 }
 
+function fmtDateNice(s) {
+  return parseDate(s).toLocaleDateString('default', { month:'short', day:'numeric' });
+}
+
+function showBarTooltip(el) {
+  const name = el.dataset.tipName;
+  const start = el.dataset.tipStart;
+  const end = el.dataset.tipEnd;
+  const dur = dayDiff(parseDate(start), parseDate(end)) + 1;
+  const tip = document.getElementById('ganttTooltip');
+  tip.innerHTML = `<div class="gantt-tooltip-name">${esc(name)}</div><div class="gantt-tooltip-meta">${fmtDateNice(start)} – ${fmtDateNice(end)} · ${dur} day${dur===1?'':'s'}</div>`;
+  tip.style.display = 'block';
+  const rect = el.getBoundingClientRect();
+  const tipRect = tip.getBoundingClientRect();
+  let left = rect.left + rect.width/2 - tipRect.width/2;
+  left = Math.max(6, Math.min(left, window.innerWidth - tipRect.width - 6));
+  let top = rect.top - tipRect.height - 8;
+  if (top < 4) top = rect.bottom + 8;
+  tip.style.left = `${left}px`;
+  tip.style.top = `${top}px`;
+}
+
+function hideBarTooltip() {
+  document.getElementById('ganttTooltip').style.display = 'none';
+}
+
 // ─── DRAG ─────────────────────────────────────────────────────────────────────
 function startDrag(e, id, type, parentId, mode) {
   if (readonly || e.button!==0) return;
   e.preventDefault(); e.stopPropagation();
+  hideBarTooltip();
   let task, subIdx;
   if (type==='task') {
     task = tasks.find(t=>t.id===id);
