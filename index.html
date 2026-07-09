@@ -130,6 +130,8 @@ body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color
 .form-group input:focus, .form-group select:focus { outline: none; border-color: var(--accent); }
 .form-group input[type=range] { padding: 0; accent-color: var(--accent); cursor: pointer; }
 .form-group input[type=date] { color-scheme: dark; }
+.form-group input:disabled { opacity: .6; cursor: not-allowed; }
+.form-group label .auto-note { text-transform: none; font-weight: 400; color: var(--text2); font-size: 10px; letter-spacing: normal; }
 .color-row { display: flex; gap: 7px; flex-wrap: wrap; }
 .color-swatch { width: 22px; height: 22px; border-radius: 50%; cursor: pointer; border: 2px solid transparent; transition: border-color .1s, transform .1s; }
 .color-swatch.selected, .color-swatch:hover { border-color: #fff; transform: scale(1.18); }
@@ -272,11 +274,11 @@ body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color
         <input type="range" id="fProgress" min="0" max="100" value="0" oninput="document.getElementById('progressLabel').textContent=this.value" />
       </div>
       <div class="form-group">
-        <label>Start Date</label>
+        <label>Start Date <span id="startAutoNote" class="auto-note" style="display:none">(auto, from subtasks)</span></label>
         <input type="date" id="fStart" />
       </div>
       <div class="form-group">
-        <label>End Date</label>
+        <label>End Date <span id="endAutoNote" class="auto-note" style="display:none">(auto, from subtasks)</span></label>
         <input type="date" id="fEnd" />
       </div>
       <div class="form-group full">
@@ -880,9 +882,33 @@ function deleteCurrentTask() {
 }
 
 // ─── SUBTASK MODAL ────────────────────────────────────────────────────────────
+// Keep the task's own start/end locked to the span of its subtasks, so the
+// two can never drift apart; unlocks for manual editing once there are none.
+function syncTaskDatesFromSubtasks() {
+  const fStart = document.getElementById('fStart');
+  const fEnd = document.getElementById('fEnd');
+  const startNote = document.getElementById('startAutoNote');
+  const endNote = document.getElementById('endAutoNote');
+  if (pendingSubtasks.length) {
+    let minStart = pendingSubtasks[0].start, maxEnd = pendingSubtasks[0].end;
+    pendingSubtasks.forEach(s => {
+      if (s.start < minStart) minStart = s.start;
+      if (s.end > maxEnd) maxEnd = s.end;
+    });
+    fStart.value = minStart;
+    fEnd.value = maxEnd;
+    fStart.disabled = true; fEnd.disabled = true;
+    startNote.style.display = 'inline'; endNote.style.display = 'inline';
+  } else {
+    fStart.disabled = false; fEnd.disabled = false;
+    startNote.style.display = 'none'; endNote.style.display = 'none';
+  }
+}
+
 function renderSubtaskListModal() {
   const el = document.getElementById('subtaskListModal');
   document.getElementById('subCount').textContent = pendingSubtasks.length ? `(${pendingSubtasks.length})` : '';
+  syncTaskDatesFromSubtasks();
   if (!pendingSubtasks.length) { el.innerHTML=''; return; }
   el.innerHTML = pendingSubtasks.map((s,i) => `
     <div class="subtask-item-modal">
