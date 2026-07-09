@@ -79,6 +79,11 @@ body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color
 .add-sub-btn { width: 20px; height: 20px; background: transparent; border: 1px dashed var(--border); border-radius: 4px; color: var(--text2); cursor: pointer; display: flex; align-items: center; justify-content: center; font-size: 14px; transition: all .1s; flex-shrink: 0; opacity: 0; }
 .task-row:hover .add-sub-btn { opacity: 1; }
 .add-sub-btn:hover { background: var(--surface2); color: var(--text); border-color: var(--accent); }
+.task-move-group { display: flex; flex-direction: column; gap: 1px; flex-shrink: 0; opacity: 0; transition: opacity .1s; }
+.task-row:hover .task-move-group { opacity: 1; }
+.task-move-btn { width: 14px; height: 11px; padding: 0; background: transparent; border: none; color: var(--text2); cursor: pointer; font-size: 8px; line-height: 1; border-radius: 2px; display: flex; align-items: center; justify-content: center; }
+.task-move-btn:hover:not(:disabled) { background: var(--border); color: var(--text); }
+.task-move-btn:disabled { opacity: .25; cursor: default; }
 
 /* GANTT */
 .gantt-area { flex: 1; overflow: auto; position: relative; background: var(--bg); }
@@ -547,11 +552,17 @@ function renderTaskList() {
       const t = r.task;
       const hasSubs = t.subtasks && t.subtasks.length;
       const isOpen = !!expanded[t.id];
+      const idx = tasks.indexOf(t);
+      const moveBtns = readonly ? '' : `<div class="task-move-group">
+        <button class="task-move-btn" title="Move up" onclick="event.stopPropagation();moveTaskUpDown('${t.id}',-1)" ${idx===0?'disabled':''}>▲</button>
+        <button class="task-move-btn" title="Move down" onclick="event.stopPropagation();moveTaskUpDown('${t.id}',1)" ${idx===tasks.length-1?'disabled':''}>▼</button>
+      </div>`;
       const addBtn = readonly ? '' : `<button class="add-sub-btn" title="Add subtask" onclick="event.stopPropagation();addSubtaskDirect('${t.id}')">+</button>`;
       const expBtn = hasSubs
         ? `<button class="expand-btn${isOpen?' open':''}" onclick="event.stopPropagation();toggleExpand('${t.id}')">▶</button>`
         : `<span style="width:16px;flex-shrink:0"></span>`;
       return `<div class="task-row${selectedId===t.id?' selected':''}" onclick="select('${t.id}')" ondblclick="${readonly?'':'openEditTask(\''+t.id+'\')'}">
+        ${moveBtns}
         ${expBtn}
         <div class="task-color-dot" style="background:${t.color}"></div>
         <span class="task-name" title="${esc(t.name)}">${esc(t.name)}</span>
@@ -577,6 +588,15 @@ function esc(s) { return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').re
 
 function toggleExpand(id) {
   expanded[id] = !expanded[id];
+  save(); render();
+}
+
+function moveTaskUpDown(id, dir) {
+  if (readonly) return;
+  const idx = tasks.findIndex(t=>t.id===id);
+  const j = idx + dir;
+  if (idx < 0 || j < 0 || j >= tasks.length) return;
+  [tasks[idx], tasks[j]] = [tasks[j], tasks[idx]];
   save(); render();
 }
 
