@@ -224,6 +224,15 @@ body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color
     <div class="user-avatar" id="userAvatar" style="background:#6c63ff">?</div>
     <span class="user-chip-name" id="userChipName">You</span>
   </div>
+  <button class="btn btn-ghost btn-sm" id="exportBtn" onclick="exportData()" title="Download your tasks as a file">
+    <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 3v12"/><path d="m7 10 5 5 5-5"/><path d="M5 21h14"/></svg>
+    Export
+  </button>
+  <button class="btn btn-ghost btn-sm" id="importBtn" onclick="triggerImport()" title="Load tasks from a file">
+    <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M12 21V9"/><path d="m7 14 5-5 5 5"/><path d="M5 3h14"/></svg>
+    Import
+  </button>
+  <input type="file" id="importFileInput" accept="application/json,.json" style="display:none" onchange="handleImportFile(event)" />
   <button class="btn btn-ghost btn-sm" id="shareBtn" onclick="openShare()">
     <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
     Share
@@ -367,6 +376,54 @@ function save() {
   try { localStorage.setItem('gantt_v2', JSON.stringify({ tasks, zoom, expanded })); } catch(e){}
 }
 
+// ─── EXPORT / IMPORT ──────────────────────────────────────────────────────────
+// Manual data portability: download your tasks as a file, then drop that
+// file into Google Drive (or wherever) yourself to move it to another device.
+function exportData() {
+  const data = { tasks, zoom, expanded };
+  const blob = new Blob([JSON.stringify(data, null, 2)], { type: 'application/json' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = `gantt-chart-${fmt(new Date())}.json`;
+  document.body.appendChild(a);
+  a.click();
+  document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+  showToast('Exported to file');
+}
+
+function triggerImport() {
+  if (readonly) return;
+  document.getElementById('importFileInput').click();
+}
+
+function handleImportFile(e) {
+  const file = e.target.files[0];
+  e.target.value = ''; // allow re-selecting the same file later
+  if (!file) return;
+  const reader = new FileReader();
+  reader.onload = () => {
+    try {
+      const data = JSON.parse(reader.result);
+      if (!data || !Array.isArray(data.tasks)) throw new Error('Invalid file');
+      tasks = data.tasks;
+      tasks.forEach(t => { if (!t.subtasks) t.subtasks = []; });
+      expanded = data.expanded || {};
+      selectedId = null;
+      setZoom(data.zoom || 'week', false);
+      computeViewStart();
+      save();
+      render();
+      scrollToToday();
+      showToast(`Imported ${tasks.length} task${tasks.length===1?'':'s'}`);
+    } catch (err) {
+      showToast('Could not read that file');
+    }
+  };
+  reader.readAsText(file);
+}
+
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 function init() {
   let sharedBy = '';
@@ -396,6 +453,7 @@ function init() {
     document.getElementById('readonlyBanner').style.display = 'flex';
     document.getElementById('addTaskBtn').style.display = 'none';
     document.getElementById('shareBtn').style.display = 'none';
+    document.getElementById('importBtn').style.display = 'none';
     document.getElementById('userChip').style.display = 'none';
     if (sharedBy) {
       document.getElementById('readonlyMsg').innerHTML =
@@ -1052,6 +1110,7 @@ function forkChart() {
   location.hash = '';
   document.getElementById('readonlyBanner').style.display='none';
   document.getElementById('addTaskBtn').style.display='inline-flex';
+  document.getElementById('importBtn').style.display='inline-flex';
   save();
   showToast('✓ You now have your own editable copy!');
   render();
