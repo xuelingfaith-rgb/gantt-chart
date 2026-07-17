@@ -4,6 +4,7 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Gantt Chart</title>
+<script src="https://accounts.google.com/gsi/client" async defer></script>
 <style>
 * { box-sizing: border-box; margin: 0; padding: 0; }
 :root {
@@ -233,6 +234,14 @@ body { font-family: 'Inter', system-ui, sans-serif; background: var(--bg); color
     Import
   </button>
   <input type="file" id="importFileInput" accept="application/json,.json" style="display:none" onchange="handleImportFile(event)" />
+  <button class="btn btn-ghost btn-sm" id="driveSaveBtn" onclick="saveToDrive()" title="Save a copy to Google Drive">
+    <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M22 12h-6l-2 3h-4l-2-3H2"/><path d="M5.45 5.11 2 12v6a2 2 0 0 0 2 2h16a2 2 0 0 0 2-2v-6l-3.45-6.89A2 2 0 0 0 16.76 4H7.24a2 2 0 0 0-1.79 1.11z"/></svg>
+    Save to Drive
+  </button>
+  <button class="btn btn-ghost btn-sm" id="driveLoadBtn" onclick="loadFromDrive()" title="Load your latest copy from Google Drive">
+    <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><path d="M21.5 2v6h-6"/><path d="M2.5 22v-6h6"/><path d="M2 11.5a10 10 0 0 1 18.8-4.3M22 12.5a10 10 0 0 1-18.8 4.2"/></svg>
+    Load from Drive
+  </button>
   <button class="btn btn-ghost btn-sm" id="shareBtn" onclick="openShare()">
     <svg width="13" height="13" fill="none" viewBox="0 0 24 24" stroke="currentColor" stroke-width="2"><circle cx="18" cy="5" r="3"/><circle cx="6" cy="12" r="3"/><circle cx="18" cy="19" r="3"/><line x1="8.59" y1="13.51" x2="15.42" y2="17.49"/><line x1="15.41" y1="6.51" x2="8.59" y2="10.49"/></svg>
     Share
@@ -424,6 +433,130 @@ function handleImportFile(e) {
   reader.readAsText(file);
 }
 
+// ─── GOOGLE DRIVE SYNC ────────────────────────────────────────────────────────
+const GOOGLE_CLIENT_ID = '229253515159-209ccuql7pviag2tc6jfpks06knorasn.apps.googleusercontent.com';
+const DRIVE_SCOPE = 'https://www.googleapis.com/auth/drive.file';
+const DRIVE_FILE_NAME = 'gantt-chart-data.json';
+let gisTokenClient = null;
+let driveAccessToken = null;
+let driveFileId = localStorage.getItem('gantt_drive_file_id') || null;
+
+// Requests (or reuses) a Drive access token, then runs the callback. Every
+// call after the first one in a session should reuse the same grant silently.
+function withDriveAuth(onReady) {
+  if (!window.google || !google.accounts || !google.accounts.oauth2) {
+    showToast('Google sign-in is still loading, try again in a second');
+    return;
+  }
+  if (!gisTokenClient) {
+    gisTokenClient = google.accounts.oauth2.initTokenClient({
+      client_id: GOOGLE_CLIENT_ID,
+      scope: DRIVE_SCOPE,
+      callback: (resp) => {
+        if (resp.error) { showToast('Google sign-in failed or was cancelled'); return; }
+        driveAccessToken = resp.access_token;
+        onReady();
+      },
+    });
+  } else {
+    gisTokenClient.callback = (resp) => {
+      if (resp.error) { showToast('Google sign-in failed or was cancelled'); return; }
+      driveAccessToken = resp.access_token;
+      onReady();
+    };
+  }
+  gisTokenClient.requestAccessToken({ prompt: driveAccessToken ? '' : 'consent' });
+}
+
+async function driveFindFile() {
+  const q = encodeURIComponent(`name='${DRIVE_FILE_NAME}' and trashed=false`);
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files?q=${q}&spaces=drive&fields=files(id,name)`, {
+    headers: { Authorization: `Bearer ${driveAccessToken}` },
+  });
+  if (!res.ok) throw new Error('list failed');
+  const json = await res.json();
+  return json.files && json.files.length ? json.files[0].id : null;
+}
+
+async function driveCreateFile(content) {
+  const boundary = 'gantt_' + Date.now();
+  const metadata = { name: DRIVE_FILE_NAME, mimeType: 'application/json' };
+  const body =
+    `--${boundary}\r\nContent-Type: application/json; charset=UTF-8\r\n\r\n${JSON.stringify(metadata)}\r\n` +
+    `--${boundary}\r\nContent-Type: application/json\r\n\r\n${content}\r\n` +
+    `--${boundary}--`;
+  const res = await fetch('https://www.googleapis.com/upload/drive/v3/files?uploadType=multipart', {
+    method: 'POST',
+    headers: { Authorization: `Bearer ${driveAccessToken}`, 'Content-Type': `multipart/related; boundary=${boundary}` },
+    body,
+  });
+  if (!res.ok) throw new Error('create failed');
+  const json = await res.json();
+  return json.id;
+}
+
+async function driveUpdateFile(fileId, content) {
+  const res = await fetch(`https://www.googleapis.com/upload/drive/v3/files/${fileId}?uploadType=media`, {
+    method: 'PATCH',
+    headers: { Authorization: `Bearer ${driveAccessToken}`, 'Content-Type': 'application/json' },
+    body: content,
+  });
+  if (!res.ok) throw new Error('update failed');
+}
+
+async function driveGetFileContent(fileId) {
+  const res = await fetch(`https://www.googleapis.com/drive/v3/files/${fileId}?alt=media`, {
+    headers: { Authorization: `Bearer ${driveAccessToken}` },
+  });
+  if (!res.ok) throw new Error('fetch failed');
+  return res.text();
+}
+
+function saveToDrive() {
+  if (readonly) return;
+  withDriveAuth(async () => {
+    try {
+      const content = JSON.stringify({ tasks, zoom, expanded }, null, 2);
+      if (!driveFileId) driveFileId = await driveFindFile();
+      if (driveFileId) {
+        await driveUpdateFile(driveFileId, content);
+      } else {
+        driveFileId = await driveCreateFile(content);
+      }
+      localStorage.setItem('gantt_drive_file_id', driveFileId);
+      showToast('Saved to Google Drive');
+    } catch (e) {
+      showToast('Could not save to Google Drive');
+    }
+  });
+}
+
+function loadFromDrive() {
+  if (readonly) return;
+  withDriveAuth(async () => {
+    try {
+      if (!driveFileId) driveFileId = await driveFindFile();
+      if (!driveFileId) { showToast('No saved file found in Drive yet'); return; }
+      localStorage.setItem('gantt_drive_file_id', driveFileId);
+      const content = await driveGetFileContent(driveFileId);
+      const data = JSON.parse(content);
+      if (!data || !Array.isArray(data.tasks)) throw new Error('bad data');
+      tasks = data.tasks;
+      tasks.forEach(t => { if (!t.subtasks) t.subtasks = []; });
+      expanded = data.expanded || {};
+      selectedId = null;
+      setZoom(data.zoom || 'week', false);
+      computeViewStart();
+      save();
+      render();
+      scrollToToday();
+      showToast(`Loaded ${tasks.length} task${tasks.length===1?'':'s'} from Google Drive`);
+    } catch (e) {
+      showToast('Could not load from Google Drive');
+    }
+  });
+}
+
 // ─── INIT ─────────────────────────────────────────────────────────────────────
 function init() {
   let sharedBy = '';
@@ -454,6 +587,8 @@ function init() {
     document.getElementById('addTaskBtn').style.display = 'none';
     document.getElementById('shareBtn').style.display = 'none';
     document.getElementById('importBtn').style.display = 'none';
+    document.getElementById('driveSaveBtn').style.display = 'none';
+    document.getElementById('driveLoadBtn').style.display = 'none';
     document.getElementById('userChip').style.display = 'none';
     if (sharedBy) {
       document.getElementById('readonlyMsg').innerHTML =
@@ -1111,6 +1246,8 @@ function forkChart() {
   document.getElementById('readonlyBanner').style.display='none';
   document.getElementById('addTaskBtn').style.display='inline-flex';
   document.getElementById('importBtn').style.display='inline-flex';
+  document.getElementById('driveSaveBtn').style.display='inline-flex';
+  document.getElementById('driveLoadBtn').style.display='inline-flex';
   save();
   showToast('✓ You now have your own editable copy!');
   render();
