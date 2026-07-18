@@ -469,9 +469,24 @@ function exportExcel() {
 }
 
 function exportPDF() {
+  // Shrink the column width just for print so the entire date range fits
+  // within one page's width instead of being cut off by the print engine.
+  const total = totalDaysNeeded();
+  const PRINT_TARGET_WIDTH = 1000; // conservative usable width for a landscape page, in CSS px
+  printColWidth = Math.max(1.5, PRINT_TARGET_WIDTH / total);
+  renderTimeline();
+  renderGanttRows();
   showToast('Opening print dialog — choose "Save as PDF"');
   setTimeout(() => window.print(), 200);
 }
+
+window.addEventListener('afterprint', () => {
+  if (printColWidth !== null) {
+    printColWidth = null;
+    renderTimeline();
+    renderGanttRows();
+  }
+});
 
 function triggerImport() {
   if (readonly) return;
@@ -714,7 +729,8 @@ function setZoom(z, rerender=true) {
   if (rerender) { render(); scrollToToday(); }
 }
 
-function colWidth() { return zoom==='day' ? 56 : zoom==='week' ? 28 : 14; }
+let printColWidth = null; // overrides colWidth() while exporting to PDF, so the whole timeline fits one page width
+function colWidth() { return printColWidth || (zoom==='day' ? 56 : zoom==='week' ? 28 : 14); }
 
 function computeViewStart() {
   const today = new Date(); today.setHours(0,0,0,0);
